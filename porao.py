@@ -21,7 +21,6 @@ last_activity_time = time.time()
 active_threat = False
 
 # --- !! IMPORTANTE: CONFIGURE SEUS ARQUIVOS ISCA AQUI !! ---
-# Crie estes arquivos vazios nos locais indicados para que sirvam de alarme.
 HOME_DIR = os.path.expanduser('~')
 CANARY_FILES = {
     os.path.join(HOME_DIR, 'Documents', 'dados_bancarios.xlsx'),
@@ -57,6 +56,22 @@ def check_ransom_note_filename(file_path: str) -> bool:
         print(f"\n🚨 AMEAÇA DETECTADA (NOME DE ARQUIVO)! Arquivo suspeito: '{filename}'")
         return True
     return False
+
+# ***** NOVA FUNÇÃO PARA DELETAR ARQUIVOS *****
+def remover_arquivo_suspeito(file_path: str):
+    """
+    Tenta deletar permanentemente um arquivo identificado como malicioso.
+    """
+    print(f"[*] Ameaça confirmada. Tentando deletar o arquivo: {os.path.basename(file_path)}")
+    try:
+        os.remove(file_path)
+        print(f"[+] Arquivo '{os.path.basename(file_path)}' deletado com sucesso.")
+    except PermissionError:
+        print(f"[-] Falha ao deletar: Permissão negada. O arquivo pode estar em uso.")
+    except FileNotFoundError:
+        print(f"[-] Falha ao deletar: Arquivo não encontrado (pode já ter sido removido).")
+    except Exception as e:
+        print(f"[-] Ocorreu um erro inesperado ao tentar deletar o arquivo: {e}")
 
 def encerrar_proctree():
     global ult_processos, active_threat
@@ -130,7 +145,7 @@ def novos_processos():
             
     ult_processos = [pid for pid in ult_processos if pid in current_pids]
 
-# --- CLASSE DE MONITORAMENTO (VERSÃO ATUALIZADA) ---
+# --- CLASSE DE MONITORAMENTO ---
 class MonitorFolder(FileSystemEventHandler):
     def __init__(self, yara_scanner: YaraScanner):
         self.yara_scanner = yara_scanner
@@ -138,46 +153,45 @@ class MonitorFolder(FileSystemEventHandler):
 
     def _analyze_file(self, file_path, is_new_file=False):
         """Função centralizada para analisar um arquivo com múltiplas tentativas."""
-        for attempt in range(3): # Tenta analisar até 3 vezes
+        for attempt in range(3):
             try:
-                # 1. Checa por nomes de arquivo de nota de resgate
                 if check_ransom_note_filename(file_path):
+                    remover_arquivo_suspeito(file_path) # <<< DELETAR
                     encerrar_proctree()
                     return
 
-                # 2. Escaneia com YARA
                 if self.yara_scanner.scan_file(file_path):
+                    remover_arquivo_suspeito(file_path) # <<< DELETAR
                     encerrar_proctree()
                     return
                 
-                # 3. Se for um arquivo executável novo, checa o hash
                 if is_new_file and extrair_extensao(file_path):
                     detector = DetectorMalware(file_path)
                     if detector.is_malware():
+                        remover_arquivo_suspeito(file_path) # <<< DELETAR
                         encerrar_proctree()
                         return
 
-                # 4. Checa a entropia (principalmente para modificações)
                 if not is_new_file:
                     with open(file_path, "rb") as f:
                         data = f.read()
                     entropy = calculate_entropy(data)
                     if entropy > 7.2:
                         print(f"\n🚨 ALERTA DE ENTROPIA! Arquivo '{file_path}' parece ter sido criptografado (Entropia: {entropy:.2f})")
+                        # Neste caso, o arquivo já está criptografado, deletá-lo pode não ser o ideal.
+                        # Vamos focar em parar o processo. Se quiser deletar, adicione a linha abaixo.
+                        # remover_arquivo_suspeito(file_path) 
                         encerrar_proctree()
                         return
-
-                # Se todas as análises passaram sem erro, sai do loop
                 break 
 
-            except (IOError, PermissionError) as e:
-                # Se o arquivo estiver bloqueado, espera um pouco e tenta de novo
+            except (IOError, PermissionError):
                 print(f"\n[Aviso] Não foi possível acessar '{os.path.basename(file_path)}' na tentativa {attempt + 1}. Tentando novamente...")
-                time.sleep(0.1) # Espera 100ms
+                time.sleep(0.1)
             
             except Exception as e:
                 print(f"\n[Erro Inesperado] Ocorreu um erro durante a análise de '{os.path.basename(file_path)}': {e}")
-                break # Sai do loop em caso de outros erros
+                break
 
     def on_any_event(self, event):
         global last_activity_time
@@ -191,15 +205,16 @@ class MonitorFolder(FileSystemEventHandler):
         self._analyze_file(event.src_path, is_new_file=True)
 
     def on_deleted(self, event):
+        if event.is_directory: return # Ignora eventos de diretório
         change_type[3] += 1
 
     def on_modified(self, event):
         if event.is_directory: return
         change_type[1] += 1
 
-        # Verificação de Canary File (isca) continua sendo a mais alta prioridade
         if event.src_path in CANARY_FILES:
             print(f"\n🚨 ALERTA MÁXIMO! Arquivo isca '{os.path.basename(event.src_path)}' foi modificado!")
+            # Não deletamos o arquivo isca, ele é nosso alarme
             encerrar_proctree()
             return
         
