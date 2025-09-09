@@ -57,7 +57,6 @@ def check_ransom_note_filename(file_path: str) -> bool:
         return True
     return False
 
-# ***** NOVA FUNÇÃO PARA QUARENTENA *****
 def colocar_em_quarentena(file_path: str):
     """
     Move um arquivo suspeito para uma pasta de quarentena,
@@ -68,27 +67,18 @@ def colocar_em_quarentena(file_path: str):
 
     print(f"[*] Ameaça confirmada. Movendo para quarentena: {os.path.basename(file_path)}")
     try:
-        # Cria o diretório de quarentena se não existir
         os.makedirs(QUARANTINE_DIR, exist_ok=True)
-
-        # Nome do arquivo zip na quarentena
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         zip_name = f"{os.path.basename(file_path)}_{timestamp}.zip"
         zip_path = os.path.join(QUARANTINE_DIR, zip_name)
-
-        # Cria o arquivo zip com o arquivo suspeito dentro
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.setpassword(QUARANTINE_PASS)
             zf.write(file_path, arcname=os.path.basename(file_path))
-        
-        # Remove o arquivo original após ser colocado na quarentena
         os.remove(file_path)
         print(f"[+] Arquivo movido para '{zip_path}' e protegido com senha.")
-
     except Exception as e:
         print(f"[-] Falha ao mover para quarentena: {e}")
 
-# ***** NOVA FUNÇÃO PARA DELETAR NOTAS DE RESGATE *****
 def deletar_nota_resgate(file_path: str):
     """
     Deleta permanentemente um arquivo identificado como nota de resgate.
@@ -106,15 +96,23 @@ def encerrar_proctree():
         return
     active_threat = True
     print("\n" + "🚨 AMEAÇA DETECTADA! ACIONANDO PROTOCOLO DE MITIGAÇÃO! 🚨")
+    
+    # ***** CORREÇÃO APLICADA AQUI *****
+    # Pega o ID do processo do nosso próprio script para não se matar
+    meu_pid = os.getpid()
+    
     pids_to_kill = ""
     for pid in reversed(ult_processos):
-        if psutil.pid_exists(pid) and pid != os.getpid():
+        # Apenas adiciona à lista de matar se o PID não for o nosso
+        if psutil.pid_exists(pid) and pid != meu_pid:
             pids_to_kill += f"/PID {pid} "
+
     if pids_to_kill:
         print(f"Encerrando processos suspeitos (PIDs): {pids_to_kill.replace('/PID', '').strip()}")
         subprocess.run(f"taskkill {pids_to_kill}/F /T", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
     ult_processos.clear()
-    print("Processos suspeitos encerrados. Recomenda-se reiniciar o sistema.")
+    print("Processos suspeitos encerrados. O monitoramento continua ativo.")
     time.sleep(10)
     active_threat = False
 
