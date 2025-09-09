@@ -20,7 +20,7 @@ ult_processos = []
 last_activity_time = time.time()
 active_threat = False
 
-# ***** NOVO: SISTEMA DE SNAPSHOT *****
+# ***** SISTEMA DE SNAPSHOT *****
 SNAPSHOT_ARQUIVOS = {} # Dicionário para guardar o estado dos arquivos
 
 HOME_DIR = os.path.expanduser('~')
@@ -37,9 +37,8 @@ FORBIDDEN_EXEC_PATHS = [
 ]
 FORBIDDEN_EXEC_PATHS = [path for path in FORBIDDEN_EXEC_PATHS if path]
 
-# --- FUNÇÕES DE DETECÇÃO E PROTEÇÃO ---
+# --- FUNÇÕES DE DETECÇÃO, RESPOSTA E SNAPSHOT ---
 
-# ***** NOVO: FUNÇÃO PARA CRIAR SNAPSHOT *****
 def criar_snapshot_arquivos(paths_to_watch):
     global SNAPSHOT_ARQUIVOS
     print("\n[*] Criando novo snapshot do sistema de arquivos...")
@@ -49,14 +48,12 @@ def criar_snapshot_arquivos(paths_to_watch):
             for file in files:
                 try:
                     file_path = os.path.join(root, file)
-                    # Guarda o tempo da última modificação do arquivo
                     temp_snapshot[file_path] = os.path.getmtime(file_path)
                 except (FileNotFoundError, PermissionError):
                     continue
     SNAPSHOT_ARQUIVOS = temp_snapshot
     print(f"[+] Snapshot criado com {len(SNAPSHOT_ARQUIVOS)} arquivos.")
 
-# ***** NOVO: FUNÇÃO PARA COMPARAR SNAPSHOT E AGIR *****
 def analisar_diferenca_e_agir(paths_to_watch):
     global SNAPSHOT_ARQUIVOS
     print("\n[*] Comparando estado atual com o último snapshot...")
@@ -67,34 +64,24 @@ def analisar_diferenca_e_agir(paths_to_watch):
                 try:
                     file_path = os.path.join(root, file)
                     file_mtime = os.path.getmtime(file_path)
-                    
-                    # Verifica se o arquivo é novo (não estava no snapshot)
                     if file_path not in SNAPSHOT_ARQUIVOS:
                         print(f"[!] Novo arquivo suspeito detectado: {os.path.basename(file_path)}")
                         colocar_em_quarentena(file_path)
                         arquivos_afetados += 1
-                    # Verifica se o arquivo foi modificado (tempo de modificação mudou)
-                    elif file_mtime > SNAPSHOT_ARQUIVOS[file_path]:
+                    elif file_mtime > SNAPSHOT_ARQUIVOS.get(file_path, 0):
                         print(f"[!] Arquivo modificado suspeito detectado: {os.path.basename(file_path)}")
                         colocar_em_quarentena(file_path)
                         arquivos_afetados += 1
-
                 except (FileNotFoundError, PermissionError):
                     continue
     print(f"[+] Análise de snapshot concluída. {arquivos_afetados} arquivos foram movidos para a quarentena.")
 
-
 def encerrar_proctree():
-    global ult_processos, active_threat, paths_to_watch_global # Usaremos a lista global
+    global ult_processos, active_threat, paths_to_watch_global
     if active_threat: return
     active_threat = True
     print("\n" + "🚨 AMEAÇA DETECTADA! ACIONANDO PROTOCOLO DE MITIGAÇÃO! 🚨")
-    
-    # ***** LÓGICA PRINCIPAL DA SUA IDEIA *****
-    # 1. Analisa a diferença entre o agora e o snapshot, e coloca tudo que for novo/modificado em quarentena.
     analisar_diferenca_e_agir(paths_to_watch_global)
-    
-    # 2. Encerra os processos suspeitos
     meu_pid = os.getpid()
     pids_to_kill = ""
     for pid in reversed(ult_processos):
@@ -104,16 +91,11 @@ def encerrar_proctree():
         print(f"Encerrando processos suspeitos (PIDs): {pids_to_kill.replace('/PID', '').strip()}")
         subprocess.run(f"taskkill {pids_to_kill}/F /T", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ult_processos.clear()
-    
     print("Processos suspeitos encerrados. O monitoramento continua ativo.")
-    time.sleep(10) # Pausa para o sistema se estabilizar
-    
-    # 3. Cria um novo snapshot limpo após a mitigação
+    time.sleep(10)
     criar_snapshot_arquivos(paths_to_watch_global)
-    
     active_threat = False
 
-# (O resto das funções como colocar_em_quarentena, novos_processos, etc., permanecem as mesmas)
 def colocar_em_quarentena(file_path: str):
     if not os.path.exists(file_path) or not os.path.isfile(file_path): return
     print(f"[*] Movendo para quarentena: {os.path.basename(file_path)}")
@@ -129,6 +111,19 @@ def colocar_em_quarentena(file_path: str):
         print(f"[+] Arquivo movido para '{zip_path}' e protegido com senha.")
     except Exception as e:
         print(f"[-] Falha ao mover para quarentena: {e}")
+
+def check_ransom_note_filename(file_path: str) -> bool:
+    filename = os.path.basename(file_path)
+    pattern = re.compile(r'((DECRYPT|RECOVER|RESTORE|HELP|INSTRUCTIONS).*\.(txt|html|hta))|restore_files_.*\.txt', re.IGNORECASE)
+    if pattern.match(filename):
+        print(f"\n🚨 AMEAÇA DETECTADA (NOTA DE RESGATE)! Arquivo: '{filename}'")
+        return True
+    return False
+
+def extrair_extensao(file: str):
+    extensions = [".exe", ".dll", ".com", ".bat", ".vbs", ".ps1"]
+    file_extension = pathlib.Path(file).suffix
+    return file_extension.lower() in extensions
 
 def novos_processos():
     global ult_processos
@@ -157,13 +152,53 @@ def novos_processos():
             continue
     ult_processos = [pid for pid in ult_processos if pid in current_pids]
 
-# A classe MonitorFolder e suas funções não precisam mais existir,
-# pois a nova lógica de snapshot é mais poderosa e centralizada.
-# Vamos simplificar o código removendo a classe inteira.
+# ***** REINTRODUZINDO O WATCHDOG COMO GATILHO RÁPIDO *****
+class MonitorFolder(FileSystemEventHandler):
+    def __init__(self, yara_scanner: YaraScanner):
+        self.yara_scanner = yara_scanner
+        super().__init__()
+
+    def on_any_event(self, event):
+        global last_activity_time
+        last_activity_time = time.time()
+
+    def on_created(self, event):
+        if event.is_directory or active_threat: return
+        try:
+            if check_ransom_note_filename(event.src_path) or self.yara_scanner.scan_file(event.src_path):
+                encerrar_proctree()
+                return
+            if extrair_extensao(event.src_path):
+                detector = DetectorMalware(event.src_path)
+                if detector.is_malware():
+                    encerrar_proctree()
+        except Exception:
+            pass
+
+    def on_modified(self, event):
+        if event.is_directory or active_threat: return
+        try:
+            if event.src_path in CANARY_FILES:
+                print(f"\n🚨 ALERTA MÁXIMO! Arquivo isca '{os.path.basename(event.src_path)}' foi modificado!")
+                encerrar_proctree()
+                return
+            with open(event.src_path, "rb") as f:
+                data = f.read()
+            if calculate_entropy(data) > 7.2:
+                print(f"\n🚨 ALERTA DE ENTROPIA! '{os.path.basename(event.src_path)}' parece criptografado.")
+                encerrar_proctree()
+        except Exception:
+            pass
+
+    def on_moved(self, event):
+        if active_threat: return
+        if event.src_path in CANARY_FILES or event.dest_path in CANARY_FILES:
+            print(f"\n🚨 ALERTA MÁXIMO! Arquivo isca '{os.path.basename(event.src_path)}' foi movido/renomeado!")
+            encerrar_proctree()
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
-    global paths_to_watch_global # Definimos a lista de pastas globalmente
+    global paths_to_watch_global
     
     paths_to_watch_global = [os.path.join(HOME_DIR, d) for d in ['Downloads', 'Documents', 'Desktop', 'Pictures']]
     temp_paths = [os.environ.get("TEMP"), os.path.join(os.environ.get("APPDATA", ""), "Local", "Temp")]
@@ -171,13 +206,23 @@ if __name__ == "__main__":
         if path and os.path.exists(path) and path not in paths_to_watch_global:
             paths_to_watch_global.append(path)
 
-    # Cria o snapshot inicial
     criar_snapshot_arquivos(paths_to_watch_global)
-
-    # A lógica de watchdog não é mais necessária, pois a verificação de processos é mais proativa
-    # e a análise de snapshot é a nossa resposta reativa.
     
-    print("\nIniciando monitoramento proativo de processos...")
+    scanner = YaraScanner()
+    if scanner.rules is None: exit()
+    
+    event_handler = MonitorFolder(yara_scanner=scanner)
+    observer = Observer()
+    
+    print("\nIniciando monitoramento híbrido (Processos + Eventos de Arquivo)...")
+    for path in paths_to_watch_global:
+        if os.path.exists(path):
+            observer.schedule(event_handler, path=path, recursive=True)
+            print(f" -> Monitorando: {path}")
+        else:
+            print(f" -> Aviso: O diretório '{path}' não existe.")
+
+    observer.start()
     
     spinner_states = ['-', '\\', '|', '/']
     spinner_index = 0
@@ -188,16 +233,14 @@ if __name__ == "__main__":
             sys.stdout.write(f"\rMonitorando ativamente... {spinner_char}"); sys.stdout.flush()
             spinner_index = (spinner_index + 1) % len(spinner_states)
             
-            # A única tarefa agora é procurar por processos suspeitos.
-            # A detecção de arquivos será feita pelo snapshot após um incidente.
             novos_processos()
             
-            # Atualiza o snapshot se o sistema estiver inativo por 15 segundos
-            if not active_threat and (time.time() - last_activity_time > 15):
+            if not active_threat and (time.time() - last_activity_time > 20):
                 criar_snapshot_arquivos(paths_to_watch_global)
-                last_activity_time = time.time() # Reseta o timer
+                last_activity_time = time.time()
 
             time.sleep(0.05)
-
     except KeyboardInterrupt:
         print("\nMonitoramento encerrado pelo usuário.")
+        observer.stop()
+    observer.join()
