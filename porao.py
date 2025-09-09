@@ -12,14 +12,17 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import sys
 import math
-import zipfile # Importado para a quarentena
+import zipfile
 
 # --- VARIÁVEIS GLOBAIS E CONFIGURAÇÃO ---
 username = os.getlogin()
 ult_processos = []
-change_type = [0, 0, 0, 0, 0] # [criados, modificados, movidos, deletados, honeypot]
+change_type = [0, 0, 0, 0, 0]
 last_activity_time = time.time()
 active_threat = False
+
+# NOVO: Lista para rastrear arquivos criados durante uma possível atividade maliciosa
+arquivos_criados_recentemente = []
 
 # --- !! IMPORTANTE: CONFIGURE SEUS ARQUIVOS ISCA AQUI !! ---
 HOME_DIR = os.path.expanduser('~')
@@ -29,15 +32,13 @@ CANARY_FILES = {
     os.path.join(HOME_DIR, 'Pictures', 'fotos_viagem_secreta.zip'),
     os.path.join(HOME_DIR, 'Desktop', 'trabalho_faculdade.docx')
 }
-# Pasta para a quarentena
 QUARANTINE_DIR = os.path.join(HOME_DIR, "Quarantine")
-QUARANTINE_PASS = b"infected" # Senha para os arquivos zip
+QUARANTINE_PASS = b"infected"
 
 # --- FUNÇÕES DE DETECÇÃO E PROTEÇÃO ---
 
 def calculate_entropy(data: bytes) -> float:
-    if not data:
-        return 0
+    if not data: return 0
     entropy = 0
     freq_dict = {}
     for byte in data:
@@ -58,14 +59,9 @@ def check_ransom_note_filename(file_path: str) -> bool:
     return False
 
 def colocar_em_quarentena(file_path: str):
-    """
-    Move um arquivo suspeito para uma pasta de quarentena,
-    protegido por um arquivo zip com senha.
-    """
-    if not os.path.exists(file_path):
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
         return
-
-    print(f"[*] Ameaça confirmada. Movendo para quarentena: {os.path.basename(file_path)}")
+    print(f"[*] Movendo para quarentena: {os.path.basename(file_path)}")
     try:
         os.makedirs(QUARANTINE_DIR, exist_ok=True)
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -80,15 +76,21 @@ def colocar_em_quarentena(file_path: str):
         print(f"[-] Falha ao mover para quarentena: {e}")
 
 def deletar_nota_resgate(file_path: str):
-    """
-    Deleta permanentemente um arquivo identificado como nota de resgate.
-    """
     print(f"[*] Nota de resgate detectada. Deletando arquivo: {os.path.basename(file_path)}")
     try:
         os.remove(file_path)
         print(f"[+] Arquivo '{os.path.basename(file_path)}' deletado com sucesso.")
     except Exception as e:
         print(f"[-] Falha ao deletar nota de resgate: {e}")
+
+# NOVO: Função para colocar em quarentena todos os arquivos criados recentemente
+def quarentena_em_massa():
+    global arquivos_criados_recentemente
+    print(f"\n[*] Iniciando quarentena em massa para {len(arquivos_criados_recentemente)} arquivo(s) recente(s)...")
+    # Copiamos a lista para não interferir com novos arquivos que possam ser criados
+    for file_path in list(arquivos_criados_recentemente):
+        colocar_em_quarentena(file_path)
+    arquivos_criados_recentemente.clear()
 
 def encerrar_proctree():
     global ult_processos, active_threat
@@ -97,20 +99,17 @@ def encerrar_proctree():
     active_threat = True
     print("\n" + "🚨 AMEAÇA DETECTADA! ACIONANDO PROTOCOLO DE MITIGAÇÃO! 🚨")
     
-    # ***** CORREÇÃO APLICADA AQUI *****
-    # Pega o ID do processo do nosso próprio script para não se matar
-    meu_pid = os.getpid()
+    # NOVO: Aciona a quarentena em massa antes de encerrar os processos
+    quarentena_em_massa()
     
+    meu_pid = os.getpid()
     pids_to_kill = ""
     for pid in reversed(ult_processos):
-        # Apenas adiciona à lista de matar se o PID não for o nosso
         if psutil.pid_exists(pid) and pid != meu_pid:
             pids_to_kill += f"/PID {pid} "
-
     if pids_to_kill:
         print(f"Encerrando processos suspeitos (PIDs): {pids_to_kill.replace('/PID', '').strip()}")
         subprocess.run(f"taskkill {pids_to_kill}/F /T", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
     ult_processos.clear()
     print("Processos suspeitos encerrados. O monitoramento continua ativo.")
     time.sleep(10)
@@ -119,15 +118,9 @@ def encerrar_proctree():
 def avaliar_heuristica():
     global change_type
     criados, modificados, movidos, deletados, honeypot = change_type
-    if honeypot > 0:
-        print("\nHeurística: Modificação em arquivo honeypot (isca) detectada!")
-        return True
-    if modificados > 30 and criados > 10:
-        print("\nHeurística: Alto volume de modificação e criação de arquivos!")
-        return True
-    if deletados > 50:
-        print("\nHeurística: Alto volume de exclusão de arquivos!")
-        return True
+    if honeypot > 0: return True
+    if modificados > 30 and criados > 10: return True
+    if deletados > 50: return True
     return False
 
 def extrair_extensao(file: str):
@@ -144,7 +137,6 @@ def novos_processos():
             cmdline_list = process.info['cmdline']
             cmdline = " ".join(cmdline_list).lower() if cmdline_list else ""
             if "vssadmin" in cmdline and "delete" in cmdline and "shadows" in cmdline:
-                print(f"\n🚨 ALERTA MÁXIMO! Tentativa de exclusão de Cópias de Sombra detectada! (PID: {process.info['pid']})")
                 if process.info['pid'] not in ult_processos:
                     ult_processos.append(process.info['pid'])
                 encerrar_proctree()
@@ -157,7 +149,6 @@ def novos_processos():
             continue
     ult_processos = [pid for pid in ult_processos if pid in current_pids]
 
-# --- CLASSE DE MONITORAMENTO ---
 class MonitorFolder(FileSystemEventHandler):
     def __init__(self, yara_scanner: YaraScanner):
         self.yara_scanner = yara_scanner
@@ -167,17 +158,17 @@ class MonitorFolder(FileSystemEventHandler):
         for attempt in range(3):
             try:
                 if check_ransom_note_filename(file_path):
-                    deletar_nota_resgate(file_path) # <<< DELETAR NOTA
+                    deletar_nota_resgate(file_path)
                     encerrar_proctree()
                     return
                 if self.yara_scanner.scan_file(file_path):
-                    colocar_em_quarentena(file_path) # <<< QUARENTENA
+                    colocar_em_quarentena(file_path)
                     encerrar_proctree()
                     return
                 if is_new_file and extrair_extensao(file_path):
                     detector = DetectorMalware(file_path)
                     if detector.is_malware():
-                        colocar_em_quarentena(file_path) # <<< QUARENTENA
+                        colocar_em_quarentena(file_path)
                         encerrar_proctree()
                         return
                 if not is_new_file:
@@ -185,16 +176,14 @@ class MonitorFolder(FileSystemEventHandler):
                         data = f.read()
                     entropy = calculate_entropy(data)
                     if entropy > 7.2:
-                        print(f"\n🚨 ALERTA DE ENTROPIA! Arquivo '{file_path}' parece ter sido criptografado (Entropia: {entropy:.2f})")
-                        colocar_em_quarentena(file_path) # <<< QUARENTENA
+                        print(f"\n🚨 ALERTA DE ENTROPIA! '{os.path.basename(file_path)}' parece criptografado.")
+                        colocar_em_quarentena(file_path)
                         encerrar_proctree()
                         return
                 break
             except (IOError, PermissionError):
-                print(f"\n[Aviso] Não foi possível acessar '{os.path.basename(file_path)}' na tentativa {attempt + 1}. Tentando novamente...")
                 time.sleep(0.1)
             except Exception as e:
-                print(f"\n[Erro Inesperado] Ocorreu um erro durante a análise de '{os.path.basename(file_path)}': {e}")
                 break
 
     def on_any_event(self, event):
@@ -205,6 +194,8 @@ class MonitorFolder(FileSystemEventHandler):
     
     def on_created(self, event):
         if event.is_directory: return
+        # NOVO: Adiciona qualquer arquivo criado à lista de recentes
+        arquivos_criados_recentemente.append(event.src_path)
         change_type[0] += 1
         self._analyze_file(event.src_path, is_new_file=True)
 
@@ -228,7 +219,6 @@ class MonitorFolder(FileSystemEventHandler):
             encerrar_proctree()
             return
 
-# --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
     print("Verificando arquivos isca (Canary Files)...")
     for f in CANARY_FILES:
@@ -241,17 +231,8 @@ if __name__ == "__main__":
                 print(f" -> Erro ao criar arquivo isca {f}: {e}")
 
     scanner = YaraScanner()
-    if scanner.rules is None:
-        print("Não foi possível iniciar o monitoramento sem as regras YARA.")
-        exit()
-
-    paths_to_watch = [
-        os.path.join(HOME_DIR, 'Downloads'),
-        os.path.join(HOME_DIR, 'Documents'),
-        os.path.join(HOME_DIR, 'Desktop'),
-        os.path.join(HOME_DIR, 'Pictures'),
-    ]
-
+    if scanner.rules is None: exit()
+    paths_to_watch = [os.path.join(HOME_DIR, d) for d in ['Downloads', 'Documents', 'Desktop', 'Pictures']]
     event_handler = MonitorFolder(yara_scanner=scanner)
     observer = Observer()
     
@@ -261,10 +242,9 @@ if __name__ == "__main__":
             observer.schedule(event_handler, path=path, recursive=True)
             print(f" -> Monitorando: {path}")
         else:
-            print(f" -> Aviso: O diretório '{path}' não existe e não será monitorado.")
+            print(f" -> Aviso: O diretório '{path}' não existe.")
 
     observer.start()
-    
     spinner_states = ['-', '\\', '|', '/']
     spinner_index = 0
     
@@ -274,16 +254,13 @@ if __name__ == "__main__":
             sys.stdout.write(f"\rMonitorando ativamente... {spinner_char}")
             sys.stdout.flush()
             spinner_index = (spinner_index + 1) % len(spinner_states)
-            
             novos_processos()
-            
             if time.time() - last_activity_time > 15:
                 change_type = [0, 0, 0, 0, 0]
-
+                # NOVO: Limpa a lista de arquivos recentes se não houver atividade
+                arquivos_criados_recentemente.clear()
             time.sleep(0.5)
-
     except KeyboardInterrupt:
         print("\nMonitoramento encerrado pelo usuário.")
         observer.stop()
-    
     observer.join()
