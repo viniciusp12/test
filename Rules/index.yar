@@ -12,7 +12,6 @@ include "gen_rats_malwareconfig.yar"
 include "gen_unspecified_malware.yar"
 include "gen_webshell_csharp.yar"
 include "gen_webshells.yar"
-include "gen_webshells_ext_vars.yar"
 include "generic_cryptors.yar"
 include "thor-webshells.yar"
 
