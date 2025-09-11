@@ -13,7 +13,6 @@ include "gen_unspecified_malware.yar"
 include "gen_webshell_csharp.yar"
 include "gen_webshells.yar"
 include "generic_cryptors.yar"
-include "thor-webshells.yar"
 
 // Inclui o nosso arquivo com regras personalizadas
 include "minhas_regras.yar"
