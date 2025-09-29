@@ -1,4 +1,4 @@
-# porao.py (ATUALIZADO)
+# porao.py (DOUTRINA AGRESSIVA)
 
 from detector import DetectorMalware
 from yara_scanner import YaraScanner
@@ -22,12 +22,8 @@ class PoraoMonitor:
         self.active_threat = False
         self.monitoring_active = True
         self.gui_update_callback = gui_update_callback
-
         self.threats_blocked = 0
-        # --- REMOVIDO: A contagem de arquivos agora é feita em tempo real ---
-        # self.files_monitored = 0 
         self.start_time = None
-        
         self.HOME_DIR = os.path.expanduser('~')
         self.CANARY_FILES = {
             os.path.join(self.HOME_DIR, 'Documents', 'dados_bancarios.xlsx'),
@@ -46,24 +42,56 @@ class PoraoMonitor:
             "trustedinstaller.exe", "tiworker.exe", "sppsvc.exe", "useroobebroker.exe",
             "backgroundtaskhost.exe", "applicationframehost.exe", "compattelrunner.exe",
             "textinputhost.exe", "systemsettings.exe", "wudfhost.exe", "conhost.exe",
-            "poraoantiransomware.exe"
+            "poraoantiransomware.exe", "explorer.exe", "dllhost.exe", "wmiprvse.exe",
+            "audiodg.exe", "rundll32.exe", "msedge.exe", "spoolsv.exe"
         }
+        
+        self.SNAPSHOT_ARQUIVOS = {}
 
-    # --- NOVA FUNÇÃO: Conta todos os arquivos nos diretórios monitorados ---
+    def criar_snapshot_arquivos(self):
+        self.log("[INFO] Criando snapshot do sistema de arquivos...")
+        self.SNAPSHOT_ARQUIVOS.clear()
+        paths_to_scan = set(p for p in self.paths_to_watch_global if os.path.exists(p))
+        for path in paths_to_scan:
+            for root, _, files in os.walk(path):
+                for file in files:
+                    try:
+                        file_path = os.path.join(root, file)
+                        self.SNAPSHOT_ARQUIVOS[file_path] = os.path.getmtime(file_path)
+                    except (FileNotFoundError, OSError):
+                        continue
+        self.log(f"[INFO] Snapshot criado com {len(self.SNAPSHOT_ARQUIVOS)} arquivos.")
+
+    def analisar_diferenca_e_agir(self):
+        self.log("[*] Analisando danos com base no snapshot...")
+        arquivos_danificados = []
+        paths_to_scan = set(p for p in self.paths_to_watch_global if os.path.exists(p))
+        for path in paths_to_scan:
+            for root, _, files in os.walk(path):
+                for file in files:
+                    try:
+                        file_path = os.path.join(root, file)
+                        if file_path not in self.SNAPSHOT_ARQUIVOS:
+                            arquivos_danificados.append(file_path)
+                        elif os.path.getmtime(file_path) > self.SNAPSHOT_ARQUIVOS[file_path]:
+                            arquivos_danificados.append(file_path)
+                    except (FileNotFoundError, OSError):
+                        continue
+        if arquivos_danificados:
+            self.log(f"[*] {len(arquivos_danificados)} arquivos novos/modificados detectados. Remediando...")
+            for file_path in arquivos_danificados:
+                self.colocar_em_quarentena(file_path, reason="Dano de Ransomware (Snapshot)")
+
     def update_total_file_count(self):
         count = 0
-        # Usamos um conjunto para evitar contar o mesmo diretório duas vezes
         paths_to_scan = set(p for p in self.paths_to_watch_global if os.path.exists(p))
-        
         for path in paths_to_scan:
             try:
                 for _, _, files in os.walk(path):
                     count += len(files)
-            except Exception as e:
-                self.log(f"Aviso: Não foi possível acessar '{path}' para contagem de arquivos. Erro: {e}")
-
+            except Exception:
+                pass
         self._send_update({'type': 'stat_update', 'stat': 'files_monitored', 'value': count})
-
 
     def _send_update(self, data):
         if self.gui_update_callback:
@@ -77,7 +105,6 @@ class PoraoMonitor:
         if not os.path.exists(file_path) or not os.path.isfile(file_path): return
         base_name = os.path.basename(file_path)
         if base_name.lower() in self.WHITELISTED_PROCESSES:
-            self.log(f"[INFO] Ação em '{base_name}' ignorada (processo na whitelist).")
             return
         file_size = os.path.getsize(file_path)
         self.log(f"[*] Movendo para quarentena: {base_name} (Motivo: {reason})")
@@ -90,24 +117,19 @@ class PoraoMonitor:
                 zf.setpassword(self.QUARANTINE_PASS)
                 zf.write(file_path, arcname=base_name)
             os.remove(file_path)
-            self.log(f"[+] Arquivo '{base_name}' movido para quarentena e protegido com senha.")
-            quarantine_details = {
-                'file_name': base_name,
-                'reason': reason,
-                'timestamp': timestamp,
-                'size_kb': round(file_size / 1024, 2),
-                'risk': 'critical' if reason in ['HASH', 'YARA', 'Executável de Origem'] else 'high'
-            }
+            self.log(f"[+] Arquivo '{base_name}' movido para quarentena.")
+            quarantine_details = {'file_name': base_name, 'reason': reason, 'timestamp': timestamp, 'size_kb': round(file_size / 1024, 2), 'risk': 'critical' if reason in ['HASH', 'YARA', 'Executável de Origem'] else 'high'}
             self._send_update({'type': 'quarantine_add', 'details': quarantine_details})
         except Exception as e:
-            self.log(f"[-] Falha ao mover para quarentena: {e}")
+            self.log(f"[-] Falha ao mover '{base_name}' para quarentena: {e}")
 
     def encerrar_proctree(self, reason="Ameaça Detectada"):
         if self.active_threat: return
         self.active_threat = True
-        self.log("\n" + f"🚨 {reason.upper()}! ACIONANDO PROTOCOLO FOCO NA ORIGEM! 🚨")
+        self.log("\n" + f"🚨 {reason.upper()}! EXTERMINANDO AMEAÇA! 🚨")
         self.threats_blocked += 1
         self._send_update({'type': 'stat_update', 'stat': 'threats_blocked', 'value': self.threats_blocked})
+        self.analisar_diferenca_e_agir()
         pids_to_kill = []
         executaveis_a_quarentenar = set()
         for pid in reversed(self.ult_processos):
@@ -130,9 +152,10 @@ class PoraoMonitor:
             self.log(f"[*] Encerrando processos suspeitos (PIDs): {pids_to_kill_str.replace('/PID', '').strip()}")
             subprocess.run(f"taskkill {pids_to_kill_str} /F /T", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.ult_processos.clear()
-        self.log("[+] Ameaça neutralizada. O monitoramento continua ativo.")
-        time.sleep(5)
+        self.log("[+] Ameaça neutralizada. O sistema está seguro.")
+        time.sleep(1) # Reduzido para 1 segundo
         self.active_threat = False
+        self.criar_snapshot_arquivos()
 
     def calculate_entropy(self, data: bytes) -> float:
         if not data: return 0
@@ -171,9 +194,10 @@ class PoraoMonitor:
         for path in temp_paths:
             if path and os.path.exists(path) and path not in self.paths_to_watch_global:
                 self.paths_to_watch_global.append(path)
+        self.criar_snapshot_arquivos()
         event_handler = MonitorFolder(self)
         self.observer = Observer()
-        self.log("\nIniciando monitoramento com Doutrina de Resposta Rápida...")
+        self.log("\nIniciando monitoramento com DOUTRINA AGRESSIVA...")
         for path in self.paths_to_watch_global:
             if os.path.exists(path):
                 self.observer.schedule(event_handler, path=path, recursive=True)
@@ -182,20 +206,19 @@ class PoraoMonitor:
                 self.log(f" -> Aviso: O diretório '{path}' não existe.")
         self.observer.start()
         
-        # --- ALTERADO: Loop principal agora atualiza a contagem de arquivos periodicamente ---
         last_file_count_update = 0
         try:
             while self.monitoring_active:
                 now = time.time()
                 self.novos_processos()
                 self._send_update({'type': 'stat_update', 'stat': 'last_check', 'value': now})
-
-                # Atualiza a contagem total de arquivos a cada 20 segundos para não pesar
                 if now - last_file_count_update > 20:
                     self.update_total_file_count()
                     last_file_count_update = now
-
-                time.sleep(2)
+                
+                # --- ALTERAÇÃO TÁTICA 1: VIGILÂNCIA QUASE INSTANTÂNEA ---
+                # Reduzido de 2s para 0.1s. Aumenta o uso de CPU, mas a resposta é muito mais rápida.
+                time.sleep(0.1) 
         except Exception as e:
             self.log(f"[ERRO CRÍTICO] Ocorreu um erro no loop de monitoramento: {e}")
         finally:
@@ -212,29 +235,24 @@ class MonitorFolder(FileSystemEventHandler):
         self.yara_scanner = monitor_instance.scanner
         super().__init__()
     
-    # --- REMOVIDO: A função de contagem de eventos não é mais necessária ---
-    # def _update_monitored_files_stat(self): ...
-
     def _analyze_file(self, file_path, is_new_file=False):
         try:
             if os.path.basename(file_path).lower() in self.monitor.WHITELISTED_PROCESSES:
                 return
-            
-            # --- REMOVIDO: A chamada para a contagem de eventos ---
-            # self._update_monitored_files_stat()
-
             if is_new_file and self.monitor.extrair_extensao(file_path):
                 if self.yara_scanner.scan_file(file_path):
                     self.monitor.encerrar_proctree(reason="Ameaça YARA"); return
-                detector = DetectorMalware(file_path)
-                if detector.is_malware():
-                    self.monitor.encerrar_proctree(reason="HASH de Malware"); return
+                
+                # --- ALTERAÇÃO TÁTICA 2: OTIMIZAÇÃO DO GATILHO ---
+                # A verificação de hash online (detector.is_malware()) foi removida daqui
+                # por ser muito lenta e impedir uma resposta imediata.
+                # A velocidade agora depende apenas do YARA e da Entropia.
 
             if not is_new_file and not self.monitor.extrair_extensao(file_path):
                 with open(file_path, "rb") as f:
                     data = f.read()
                 if self.monitor.calculate_entropy(data) > 7.2:
-                    self.monitor.log(f"\n🚨 ALERTA DE ENTROPIA! Arquivo '{os.path.basename(file_path)}' suspeito de criptografia.")
+                    self.monitor.log(f"\n🚨 ALERTA DE ENTROPIA! Arquivo '{os.path.basename(file_path)}' suspeito.")
                     self.monitor.encerrar_proctree(reason="Alta Entropia")
                     return
         except Exception:
@@ -255,5 +273,5 @@ class MonitorFolder(FileSystemEventHandler):
     def on_moved(self, event):
         if self.monitor.active_threat: return
         if event.src_path in self.monitor.CANARY_FILES or event.dest_path in self.monitor.CANARY_FILES:
-            self.monitor.log(f"\n🚨 ALERTA MÁXIMO! Arquivo isca '{os.path.basename(event.src_path)}' foi movido/renomeado!")
+            self.monitor.log(f"\n🚨 ALERTA MÁXIMO! Arquivo isca '{os.path.basename(event.src_path)}' foi movido!")
             self.monitor.encerrar_proctree(reason="Arquivo Isca Movido")
