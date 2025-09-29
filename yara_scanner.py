@@ -9,8 +9,6 @@ class YaraScanner:
         Compila as regras YARA a partir de um arquivo de índice externo.
         """
         try:
-            # Constrói o caminho para o arquivo de índice de forma dinâmica
-            # Isso garante que funcione, não importa de onde o script seja executado
             base_dir = os.path.dirname(os.path.abspath(__file__))
             rules_path = os.path.join(base_dir, "rules", "index.yar")
 
@@ -37,11 +35,9 @@ class YaraScanner:
             return False
         
         try:
-            # Adicionado timeout para evitar que a verificação de arquivos grandes trave o programa
             matches = self.rules.match(filepath=file_path, timeout=5)
             
             if matches:
-                # Usamos um set para não mostrar regras duplicadas, caso haja
                 matched_rules = list(set([match.rule for match in matches]))
                 print(f"🚨 AMEAÇA YARA DETECTADA! Arquivo: '{os.path.basename(file_path)}'. Regra(s): {matched_rules}")
                 return True
@@ -49,7 +45,6 @@ class YaraScanner:
             print(f"[Aviso] Verificação YARA do arquivo '{os.path.basename(file_path)}' excedeu o tempo limite.")
             return False
         except yara.Error:
-            # Pode ocorrer um erro se o arquivo for bloqueado, por isso retornamos False.
             return False
         
         return False
