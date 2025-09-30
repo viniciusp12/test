@@ -1,21 +1,18 @@
-# gui.py (CORRIGIDO)
+# gui.py (ATUALIZADO)
 
 import customtkinter as ctk
-import sys
 import threading
 import os
 import subprocess
 import time
+import sys
 from porao import PoraoMonitor
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-
-        # --- CONFIGURAÇÕES GLOBAIS DE DESIGN ---
         self.title("Porão Anti-Ransomware")
         self.geometry("1100x750")
-
         self.COLOR_BACKGROUND = "#1A1B25"
         self.COLOR_FRAME = "#242535"
         self.COLOR_TEXT_PRIMARY = "#E0E0E0"
@@ -26,54 +23,41 @@ class App(ctk.CTk):
         self.COLOR_GREEN_STATUS = self.COLOR_GREEN_ACCENT
         self.COLOR_RISK_CRITICAL = "#d14a4a"
         self.COLOR_RISK_HIGH = "#e88f35"
-        
         self.FONT_FAMILY = "Poppins"
         self.FONT_BOLD = (self.FONT_FAMILY, 16, "bold")
         self.FONT_NORMAL = (self.FONT_FAMILY, 12)
         self.FONT_SMALL = (self.FONT_FAMILY, 10)
-
         self.configure(fg_color=self.COLOR_BACKGROUND)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # --- ALTERAÇÃO 1: Definir caminhos para logs persistentes ---
         self.log_dir = os.path.join(os.getenv('APPDATA'), 'PoraoAntiRansomware')
         self.log_file = os.path.join(self.log_dir, 'activity.log')
         os.makedirs(self.log_dir, exist_ok=True)
-
         self.monitor_thread = None
         self.monitor_instance = None
         self.is_monitoring = False
         self.start_time = None
-        
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=0)
         self.grid_rowconfigure(1, weight=0)
         self.grid_rowconfigure(2, weight=1)
         self.grid_rowconfigure(3, weight=1)
-
         self.create_header()
         self.create_control_panel()
         self.create_statistics()
         self.create_quarantine()
         self.create_logs()
-
         self.update_active_time()
-
-        # --- ALTERAÇÃO 2: Carregar dados existentes ao iniciar ---
         self.load_logs_on_start()
         self.load_quarantine_on_start()
-
 
     def create_header(self):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.grid(row=0, column=0, columnspan=2, padx=25, pady=(15, 10), sticky="ew")
-
         title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         title_frame.pack(side="left", anchor="w")
         ctk.CTkLabel(title_frame, text="Porão Anti-Ransomware", font=(self.FONT_FAMILY, 24, "bold"), text_color=self.COLOR_TEXT_PRIMARY).pack(anchor="w")
         ctk.CTkLabel(title_frame, text="Sistema de Proteção Avançado", font=self.FONT_NORMAL, text_color=self.COLOR_TEXT_SECONDARY).pack(anchor="w")
-
         status_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         status_frame.pack(side="right", anchor="e")
         ctk.CTkLabel(status_frame, text="Status:", font=self.FONT_NORMAL, text_color=self.COLOR_TEXT_SECONDARY).pack(side="left")
@@ -83,24 +67,17 @@ class App(ctk.CTk):
     def create_control_panel(self):
         control_panel_frame = ctk.CTkFrame(self, fg_color="transparent")
         control_panel_frame.grid(row=1, column=0, columnspan=2, padx=25, pady=(0, 10), sticky="ew")
-        
         ctk.CTkLabel(control_panel_frame, text="⚡ Painel de Controle", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).pack(anchor="w", padx=15, pady=(10, 5))
-        
-        self.start_stop_button = ctk.CTkButton(control_panel_frame, text="Iniciar Monitoramento", font=(self.FONT_FAMILY, 12, "bold"), command=self.toggle_monitoring,
-                                              fg_color=self.COLOR_GREEN_ACCENT, hover_color="#288a5f", height=40, corner_radius=8)
+        self.start_stop_button = ctk.CTkButton(control_panel_frame, text="Iniciar Monitoramento", font=(self.FONT_FAMILY, 12, "bold"), command=self.toggle_monitoring, fg_color=self.COLOR_GREEN_ACCENT, hover_color="#288a5f", height=40, corner_radius=8)
         self.start_stop_button.pack(fill="x", padx=15, pady=(0, 5))
-        
-        self.quarantine_button = ctk.CTkButton(control_panel_frame, text="Ver Quarentena", font=self.FONT_NORMAL, command=self.open_quarantine,
-                                              fg_color="transparent", border_color=self.COLOR_BORDER, border_width=2, height=30, corner_radius=8)
+        self.quarantine_button = ctk.CTkButton(control_panel_frame, text="Ver Pasta da Quarentena", font=self.FONT_NORMAL, command=self.open_quarantine, fg_color="transparent", border_color=self.COLOR_BORDER, border_width=2, height=30, corner_radius=8)
         self.quarantine_button.pack(fill="x", padx=15, pady=(0, 10))
 
     def create_statistics(self):
         stats_frame = ctk.CTkFrame(self, fg_color=self.COLOR_FRAME, corner_radius=10)
         stats_frame.grid(row=2, column=0, padx=(25, 10), pady=(10, 0), sticky="nsew")
         stats_frame.grid_columnconfigure(1, weight=1)
-
         ctk.CTkLabel(stats_frame, text="📊 Estatísticas", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).grid(row=0, column=0, columnspan=2, padx=15, pady=(10, 5), sticky="w")
-        
         self.threats_label = self.create_stat_row(stats_frame, "Ameaças Bloqueadas", 1, "0")
         self.files_label = self.create_stat_row(stats_frame, "Arquivos Monitorados", 2, "0")
         self.uptime_label = self.create_stat_row(stats_frame, "Tempo Ativo", 3, "00h 00m 00s")
@@ -111,10 +88,16 @@ class App(ctk.CTk):
         quarantine_frame.grid(row=2, column=1, padx=(10, 25), pady=(10, 0), sticky="nsew")
         quarantine_frame.grid_rowconfigure(1, weight=1)
         quarantine_frame.grid_columnconfigure(0, weight=1)
+        
+        # Frame para o título e o botão de atualizar
+        top_frame = ctk.CTkFrame(quarantine_frame, fg_color="transparent")
+        top_frame.grid(row=0, column=0, padx=15, pady=(10, 5), sticky="ew")
+        ctk.CTkLabel(top_frame, text="🛡️ Quarentena", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).pack(side="left")
+        # --- ALTERAÇÃO: Adicionar botão de Atualizar ---
+        update_button = ctk.CTkButton(top_frame, text="Atualizar", font=(self.FONT_FAMILY, 10), command=self.load_quarantine_on_start, width=80, height=20, fg_color=self.COLOR_BORDER)
+        update_button.pack(side="right")
 
-        ctk.CTkLabel(quarantine_frame, text="🛡️ Quarentena", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
-        self.quarantine_scroll_frame = ctk.CTkScrollableFrame(quarantine_frame, fg_color=self.COLOR_BACKGROUND, label_text="Arquivos isolados por atividade suspeita",
-                                                             label_font=self.FONT_NORMAL, label_text_color=self.COLOR_TEXT_SECONDARY)
+        self.quarantine_scroll_frame = ctk.CTkScrollableFrame(quarantine_frame, fg_color=self.COLOR_BACKGROUND, label_text="Arquivos isolados por atividade suspeita", label_font=self.FONT_NORMAL, label_text_color=self.COLOR_TEXT_SECONDARY)
         self.quarantine_scroll_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
 
     def create_logs(self):
@@ -122,10 +105,8 @@ class App(ctk.CTk):
         log_frame.grid(row=3, column=0, columnspan=2, padx=25, pady=(10, 10), sticky="nsew")
         log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
-
         ctk.CTkLabel(log_frame, text="🕒 Logs de Atividade", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
-        self.log_textbox = ctk.CTkTextbox(log_frame, state="disabled", wrap="word", height=200, fg_color=self.COLOR_BACKGROUND,
-                                         font=self.FONT_NORMAL, text_color=self.COLOR_TEXT_SECONDARY, border_width=0)
+        self.log_textbox = ctk.CTkTextbox(log_frame, state="disabled", wrap="word", height=200, fg_color=self.COLOR_BACKGROUND, font=self.FONT_NORMAL, text_color=self.COLOR_TEXT_SECONDARY, border_width=0)
         self.log_textbox.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
 
     def create_stat_row(self, parent, text, row, initial_value):
@@ -146,16 +127,13 @@ class App(ctk.CTk):
     def add_quarantine_entry(self, details):
         risk_colors = {"critical": self.COLOR_RISK_CRITICAL, "high": self.COLOR_RISK_HIGH}
         risk_color = risk_colors.get(details['risk'], "gray")
-
         item_frame = ctk.CTkFrame(self.quarantine_scroll_frame, fg_color=self.COLOR_FRAME, corner_radius=8, border_width=1, border_color=self.COLOR_BORDER)
         item_frame.pack(fill="x", expand=True, padx=5, pady=5)
         item_frame.grid_columnconfigure(0, weight=1)
-
         top_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
         top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(5,0))
         ctk.CTkLabel(top_frame, text=details['file_name'], font=(self.FONT_FAMILY, 12, "bold"), text_color=self.COLOR_TEXT_PRIMARY).pack(side="left")
         ctk.CTkLabel(top_frame, text=details['risk'].upper(), font=(self.FONT_FAMILY, 10, "bold"), text_color="white", fg_color=risk_color, corner_radius=8).pack(side="right")
-
         ctk.CTkLabel(item_frame, text=f"Motivo: {details['reason']}", font=self.FONT_NORMAL, text_color=self.COLOR_TEXT_PRIMARY, wraplength=400, justify="left").grid(row=1, column=0, sticky="w", padx=10, pady=2)
         ctk.CTkLabel(item_frame, text=f"{details['size_kb']} KB  |  {details['timestamp']}", font=self.FONT_SMALL, text_color=self.COLOR_TEXT_SECONDARY).grid(row=2, column=0, sticky="w", padx=10, pady=(0,5))
 
@@ -164,28 +142,27 @@ class App(ctk.CTk):
         if update_type == 'log':
             message = update_data['message']
             self.add_log_message(message)
-            # --- ALTERAÇÃO 3: Salvar cada log em arquivo ---
             try:
                 with open(self.log_file, 'a', encoding='utf-8') as f:
                     f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
             except Exception as e:
                 print(f"Erro ao salvar log: {e}")
-
         elif update_type == 'stat_update':
             stat, value = update_data['stat'], update_data['value']
             if stat == 'threats_blocked': self.threats_label.configure(text=str(value))
             elif stat == 'files_monitored': self.files_label.configure(text=f"{value:,}".replace(",", "."))
             elif stat == 'last_check': self.last_check_label.configure(text=time.strftime('%H:%M:%S', time.localtime(value)))
-        elif update_type == 'quarantine_add': self.add_quarantine_entry(update_data['details'])
+        elif update_type == 'quarantine_add': 
+            self.add_quarantine_entry(update_data['details'])
+            # --- ALTERAÇÃO: Forçar a atualização da lista da quarentena após um item ser adicionado ---
+            self.load_quarantine_on_start()
 
     def toggle_monitoring(self):
         if not self.is_monitoring:
             self.is_monitoring = True
             self.status_value.configure(text="● ATIVO", text_color=self.COLOR_GREEN_STATUS)
             self.start_stop_button.configure(text="Parar Monitoramento", fg_color=self.COLOR_RED_STATUS, hover_color="#c9302c")
-            
             self.add_log_message("Iniciando monitoramento...")
-            
             self.start_time = time.time()
             self.monitor_instance = PoraoMonitor(gui_update_callback=lambda data: self.after(0, self.handle_backend_update, data))
             self.monitor_thread = threading.Thread(target=self.monitor_instance.start_monitoring, daemon=True)
@@ -217,14 +194,11 @@ class App(ctk.CTk):
         if self.is_monitoring and self.monitor_instance: self.monitor_instance.stop_monitoring()
         self.destroy()
 
-    # --- ALTERAÇÃO 4: Novas funções para carregar dados salvos ---
     def load_logs_on_start(self):
         try:
             if os.path.exists(self.log_file):
                 with open(self.log_file, 'r', encoding='utf-8') as f:
-                    # Lê as últimas 200 linhas para não sobrecarregar a UI
                     lines = f.readlines()[-200:]
-                
                 if lines:
                     self.log_textbox.configure(state="normal")
                     self.log_textbox.delete("1.0", "end")
@@ -236,19 +210,14 @@ class App(ctk.CTk):
 
     def load_quarantine_on_start(self):
         quarantine_dir = os.path.join(os.path.expanduser('~'), "Quarantine")
-        if not os.path.exists(quarantine_dir):
-            return
-
-        # Limpa a lista atual antes de carregar
+        if not os.path.exists(quarantine_dir): return
         for widget in self.quarantine_scroll_frame.winfo_children():
             widget.destroy()
-
         for filename in sorted(os.listdir(quarantine_dir), reverse=True):
             if filename.endswith(".zip"):
                 full_path = os.path.join(quarantine_dir, filename)
                 original_name = filename
                 try:
-                    # Tenta extrair o nome original e data do nome do arquivo
                     parts = filename.rsplit('_', 1)
                     name_part = parts[0]
                     date_part = parts[1].replace('.zip', '')
@@ -256,21 +225,12 @@ class App(ctk.CTk):
                     timestamp = time.strftime('%Y-%m-%d %H:%M:%S', dt_obj)
                     original_name = name_part
                 except (IndexError, ValueError):
-                    # Se falhar, usa a data de modificação do arquivo
                     mtime = os.path.getmtime(full_path)
                     timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
-                
-                details = {
-                    'file_name': original_name,
-                    'reason': 'Carregado da quarentena',
-                    'timestamp': timestamp,
-                    'size_kb': round(os.path.getsize(full_path) / 1024, 2),
-                    'risk': 'high'
-                }
+                details = {'file_name': original_name, 'reason': 'Carregado da quarentena', 'timestamp': timestamp, 'size_kb': round(os.path.getsize(full_path) / 1024, 2), 'risk': 'high'}
                 self.add_quarantine_entry(details)
 
 if __name__ == "__main__":
-    # Garante que o sys.argv seja tratado apenas na versão compilada
     if hasattr(sys, 'frozen') and "--background-service" in sys.argv:
         monitor = PoraoMonitor()
         monitor.start_monitoring()

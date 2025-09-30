@@ -4,3 +4,5 @@ requests
 watchdog
 regex
 customtkinter
+pefile
+scikit-learn
