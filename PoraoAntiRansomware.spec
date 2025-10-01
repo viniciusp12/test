@@ -5,7 +5,7 @@ a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('rules', 'rules')],
+    datas=[('rules', 'rules'), ('classifier', 'classifier')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

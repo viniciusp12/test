@@ -1,4 +1,4 @@
-# gui.py (ATUALIZADO)
+# gui.py
 
 import customtkinter as ctk
 import threading
@@ -88,15 +88,11 @@ class App(ctk.CTk):
         quarantine_frame.grid(row=2, column=1, padx=(10, 25), pady=(10, 0), sticky="nsew")
         quarantine_frame.grid_rowconfigure(1, weight=1)
         quarantine_frame.grid_columnconfigure(0, weight=1)
-        
-        # Frame para o título e o botão de atualizar
         top_frame = ctk.CTkFrame(quarantine_frame, fg_color="transparent")
         top_frame.grid(row=0, column=0, padx=15, pady=(10, 5), sticky="ew")
         ctk.CTkLabel(top_frame, text="🛡️ Quarentena", font=self.FONT_BOLD, text_color=self.COLOR_TEXT_PRIMARY).pack(side="left")
-        # --- ALTERAÇÃO: Adicionar botão de Atualizar ---
         update_button = ctk.CTkButton(top_frame, text="Atualizar", font=(self.FONT_FAMILY, 10), command=self.load_quarantine_on_start, width=80, height=20, fg_color=self.COLOR_BORDER)
         update_button.pack(side="right")
-
         self.quarantine_scroll_frame = ctk.CTkScrollableFrame(quarantine_frame, fg_color=self.COLOR_BACKGROUND, label_text="Arquivos isolados por atividade suspeita", label_font=self.FONT_NORMAL, label_text_color=self.COLOR_TEXT_SECONDARY)
         self.quarantine_scroll_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
 
@@ -152,9 +148,7 @@ class App(ctk.CTk):
             if stat == 'threats_blocked': self.threats_label.configure(text=str(value))
             elif stat == 'files_monitored': self.files_label.configure(text=f"{value:,}".replace(",", "."))
             elif stat == 'last_check': self.last_check_label.configure(text=time.strftime('%H:%M:%S', time.localtime(value)))
-        elif update_type == 'quarantine_add': 
-            self.add_quarantine_entry(update_data['details'])
-            # --- ALTERAÇÃO: Forçar a atualização da lista da quarentena após um item ser adicionado ---
+        elif update_type == 'quarantine_add':
             self.load_quarantine_on_start()
 
     def toggle_monitoring(self):
@@ -211,23 +205,35 @@ class App(ctk.CTk):
     def load_quarantine_on_start(self):
         quarantine_dir = os.path.join(os.path.expanduser('~'), "Quarantine")
         if not os.path.exists(quarantine_dir): return
+        
         for widget in self.quarantine_scroll_frame.winfo_children():
             widget.destroy()
+
         for filename in sorted(os.listdir(quarantine_dir), reverse=True):
             if filename.endswith(".zip"):
                 full_path = os.path.join(quarantine_dir, filename)
-                original_name = filename
+                original_name = filename[:-4]
+                timestamp = ""
+
                 try:
-                    parts = filename.rsplit('_', 1)
-                    name_part = parts[0]
-                    date_part = parts[1].replace('.zip', '')
-                    dt_obj = time.strptime(date_part, '%Y%m%d-%H%M%S')
-                    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', dt_obj)
-                    original_name = name_part
-                except (IndexError, ValueError):
+                    if len(filename) > 19 and filename[-20] == '_':
+                        date_part = filename[-19:-4]
+                        dt_obj = time.strptime(date_part, '%Y%m%d-%H%M%S')
+                        timestamp = time.strftime('%Y-%m-%d %H:%M:%S', dt_obj)
+                        original_name = filename[:-20]
+                    else:
+                        raise ValueError("Padrão de nome de arquivo não reconhecido.")
+                except (ValueError, IndexError):
                     mtime = os.path.getmtime(full_path)
                     timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
-                details = {'file_name': original_name, 'reason': 'Carregado da quarentena', 'timestamp': timestamp, 'size_kb': round(os.path.getsize(full_path) / 1024, 2), 'risk': 'high'}
+                
+                details = {
+                    'file_name': original_name,
+                    'reason': 'Carregado da quarentena',
+                    'timestamp': timestamp,
+                    'size_kb': round(os.path.getsize(full_path) / 1024, 2),
+                    'risk': 'high'
+                }
                 self.add_quarantine_entry(details)
 
 if __name__ == "__main__":

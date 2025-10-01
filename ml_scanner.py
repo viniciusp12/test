@@ -9,62 +9,43 @@ import math
 
 class MLScanner:
     def __init__(self):
-        """
-        Carrega o modelo de Machine Learning e a lista de features.
-        """
         self.clf = None
         self.features = None
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             classifier_path = os.path.join(base_dir, "classifier", "svm_classifier.pkl")
             features_path = os.path.join(base_dir, "classifier", "svm_features.pkl")
-
             if not os.path.exists(classifier_path) or not os.path.exists(features_path):
                 print("[ERRO ML] Arquivos de modelo (.pkl) não encontrados na pasta 'classifier'.")
                 return
-
             print("[INFO ML] Carregando modelo de Machine Learning...")
             self.clf = joblib.load(classifier_path)
             with open(features_path, 'rb') as f:
                 self.features = pickle.load(f)
             print("[INFO ML] Modelo carregado com sucesso.")
-
         except Exception as e:
             print(f"[ERRO ML] Falha ao carregar o modelo de Machine Learning: {e}")
 
     def is_malware(self, file_path: str) -> bool:
-        """
-        Analisa um arquivo com o modelo de ML e retorna True se for malicioso.
-        """
         if not self.clf or not self.features or not os.path.exists(file_path):
             return False
-
         try:
             print(f"[INFO ML] Analisando '{os.path.basename(file_path)}' com ML...")
             data = self._extract_infos(file_path)
             if not data:
                 return False
-
             pe_features = [data.get(feature, 0) for feature in self.features]
-            
             prediction = self.clf.predict([pe_features])[0]
-            
-            # A predição retorna 0 para 'malicioso' e 1 para 'legítimo'
             if prediction == 0:
                 print(f"🚨 AMEAÇA ML DETECTADA! Arquivo: '{os.path.basename(file_path)}' classificado como MALICIOSO.")
                 return True
-
         except pefile.PEFormatError:
-            # Ignora arquivos que não são executáveis válidos do Windows
             return False
         except Exception as e:
             print(f"[ERRO ML] Falha durante a análise do arquivo '{os.path.basename(file_path)}': {e}")
             return False
-        
         return False
 
-    # --- Funções de extração de características (adaptadas de sentinel.py) ---
-    
     def _get_entropy(self, data):
         if len(data) == 0: return 0.0
         occurences = array.array('L', [0] * 256)
@@ -94,7 +75,7 @@ class MLScanner:
         return resources
 
     def _extract_infos(self, fpath):
-        res = {}
+        res = {}; pe = None
         try:
             pe = pefile.PE(fpath)
             res['Machine'] = pe.FILE_HEADER.Machine
@@ -151,4 +132,6 @@ class MLScanner:
             except AttributeError: res['LoadConfigurationSize'] = 0
         except Exception:
             return None
+        finally:
+            if pe: pe.close()
         return res

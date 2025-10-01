@@ -1,4 +1,4 @@
-# porao.py (VERSÃO FINAL HÍBRIDA - EVENT LOG + ML)
+# porao.py (VERSÃO FINAL DE COMPATIBILIDADE - PSUTIL)
 
 from detector import DetectorMalware
 from yara_scanner import YaraScanner
@@ -14,12 +14,11 @@ from watchdog.events import FileSystemEventHandler
 import sys
 import math
 import zipfile
-import win32evtlog # Nova importação
 
 class PoraoMonitor:
     def __init__(self, gui_update_callback=None):
         self.username = os.getlogin()
-        self.ult_processos = []
+        self.ult_processos_vistos = set()
         self.active_threat = False
         self.monitoring_active = True
         self.gui_update_callback = gui_update_callback
@@ -46,8 +45,9 @@ class PoraoMonitor:
             ".oops", ".osiris", ".purge", ".r5a", ".RARE1", ".rokku", ".sage", ".shit", ".silent", ".thor", ".troyancoder@qq_com",
             ".unavailable", ".vault", ".vvv", ".wcry", ".WNCRY", ".wncryt", ".wnry", ".xdata", ".xtbl", ".xyz", ".zcrypt", ".zepto", ".zorro", ".zzzzz"
         }
+        self.entropy_hit_score = 0
+        self.last_entropy_hit_time = 0
 
-    # As outras funções (log, encerrar_proctree, etc.) continuam aqui...
     def _send_update(self, data):
         if self.gui_update_callback: self.gui_update_callback(data)
     def log(self, message):
@@ -78,7 +78,8 @@ class PoraoMonitor:
         pids_to_kill = set()
         executaveis_a_quarentenar = set()
         if pid: pids_to_kill.add(pid)
-        for p in reversed(self.ult_processos):
+        # Usa a lista de processos recentes do psutil
+        for p in self.ult_processos_vistos:
             if psutil.pid_exists(p): pids_to_kill.add(p)
         for pid_to_check in list(pids_to_kill):
             try:
@@ -95,7 +96,7 @@ class PoraoMonitor:
         if pids_to_kill_str:
             self.log(f"[*] Encerrando processos suspeitos (PIDs): {pids_to_kill_str.replace('/PID', '').strip()}")
             subprocess.run(f"taskkill {pids_to_kill_str} /F /T", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.ult_processos.clear()
+        self.ult_processos_vistos.clear()
         self.log("[+] Ameaça neutralizada. O sistema está seguro.")
         time.sleep(2)
         self.active_threat = False
@@ -112,84 +113,52 @@ class PoraoMonitor:
         extensions = [".exe", ".dll", ".com", ".bat", ".vbs", ".ps1"]
         return pathlib.Path(file).suffix.lower() in extensions
     
-    # --- MOTOR DE DETECÇÃO PRINCIPAL (SUBSTITUÍDO) ---
+    def check_new_processes(self):
+        for proc in psutil.process_iter(['pid', 'name', 'exe', 'create_time']):
+            try:
+                if proc.pid in self.ult_processos_vistos: continue
+                if (time.time() - proc.info['create_time']) < 5:
+                    self.ult_processos_vistos.add(proc.pid)
+                    proc_path = proc.info['exe']
+                    proc_name = proc.info['name']
+                    if not proc_path or proc_name.lower() in self.WHITELISTED_PROCESSES: continue
+                    self.log(f"[Processo Detectado] '{proc_name}' (PID: {proc.pid})")
+                    if self.extrair_extensao(proc_path):
+                        if self.ml_scanner.is_malware(proc_path):
+                            self.encerrar_proctree(reason="Ameaça Detectada por ML", pid=proc.pid); return
+                        if self.scanner.scan_file(proc_path):
+                            self.encerrar_proctree(reason="Ameaça YARA", pid=proc.pid); return
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
     def start_monitoring(self):
         self.monitoring_active = True
         self.scanner = YaraScanner()
         self.ml_scanner = MLScanner()
-        
-        # Inicia o monitor de arquivos (watchdog) em uma thread separada
         watchdog_thread = threading.Thread(target=self.start_watchdog_monitor, daemon=True)
         watchdog_thread.start()
-        
-        self.log("\nIniciando monitoramento de processos via Log de Eventos do Windows...")
-        
-        server = 'localhost'
-        logtype = 'Security'
-        flags = win32evtlog.EVENTLOG_FORWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
-        
-        try:
-            h = win32evtlog.OpenEventLog(server, logtype)
-        except Exception as e:
-            self.log(f"[ERRO CRÍTICO] Falha ao abrir o Log de Eventos de Segurança: {e}")
-            self.log("[ERRO CRÍTICO] Verifique se o script está rodando como Administrador e se a Política de Auditoria está habilitada.")
-            return
-
+        self.log("\nIniciando monitoramento de processos (Modo de Compatibilidade)...")
+        for proc in psutil.process_iter(['pid']): self.ult_processos_vistos.add(proc.pid)
         while self.monitoring_active:
-            events = win32evtlog.ReadEventLog(h, flags, 0)
-            if events:
-                for event in events:
-                    if event.EventID == 4688: # Evento "Um novo processo foi criado"
-                        self.handle_new_process_event(event)
-            time.sleep(0.1) # Pequeno sleep para não sobrecarregar
-        win32evtlog.CloseEventLog(h)
-
-    def handle_new_process_event(self, event):
-        pid = event.Data[1]
-        process_path = event.Data[5]
-        process_name = os.path.basename(process_path)
-
-        if process_name.lower() in self.WHITELISTED_PROCESSES: return
-        if not os.path.exists(process_path): return
-        
-        self.log(f"[Processo Detectado] '{process_name}' (PID: {pid})")
-        self.ult_processos.append(int(pid.replace('0x', ''), 16))
-
-        # --- HEURÍSTICA 1: TENTATIVA DE DELETAR SHADOW COPIES ---
-        if process_name.lower() == 'vssadmin.exe' and 'delete' in event.Data[12].lower() and 'shadows' in event.Data[12].lower():
-            self.log(f"🚨 ALERTA MÁXIMO! PROCESSO TENTANDO DELETAR BACKUPS (SHADOW COPY)!")
-            self.encerrar_proctree(reason="Delete Shadow Copy", pid=int(pid.replace('0x', ''), 16))
-            return
-            
-        # --- HEURÍSTICA 2: ANÁLISE DE EXECUTÁVEL COM ML E YARA ---
-        if self.extrair_extensao(process_path):
-            if self.ml_scanner.is_malware(process_path):
-                self.encerrar_proctree(reason="Ameaça Detectada por ML", pid=int(pid.replace('0x', ''), 16))
-                return
-            if self.scanner.scan_file(process_path):
-                self.encerrar_proctree(reason="Ameaça YARA", pid=int(pid.replace('0x', ''), 16))
-                return
+            self.check_new_processes()
+            time.sleep(0.1)
 
     def start_watchdog_monitor(self):
         self.paths_to_watch_global = [os.path.join(self.HOME_DIR, d) for d in ['Downloads', 'Documents', 'Desktop', 'Pictures']]
         temp_paths = [os.environ.get("TEMP"), os.path.join(os.environ.get("APPDATA", ""), "Local", "Temp")]
         for path in temp_paths:
-            if path and os.path.exists(path) and path not in self.paths_to_watch_global:
-                self.paths_to_watch_global.append(path)
+            if path and os.path.exists(path) and path not in self.paths_to_watch_global: self.paths_to_watch_global.append(path)
         event_handler = MonitorFolder(self)
         observer = Observer()
         self.log("\nIniciando monitoramento de arquivos (Watchdog)...")
         for path in self.paths_to_watch_global:
-            if os.path.exists(path):
-                observer.schedule(event_handler, path=path, recursive=True)
-        observer.start()
-        observer.join()
-
+            if os.path.exists(path): observer.schedule(event_handler, path=path, recursive=True)
+        observer.start(); observer.join()
+    
     def stop_monitoring(self):
         self.monitoring_active = False
 
 class MonitorFolder(FileSystemEventHandler):
-    # ... (A classe MonitorFolder continua a mesma, com a análise de entropia, extensões e arquivos isca) ...
     def __init__(self, monitor_instance: PoraoMonitor):
         self.monitor = monitor_instance
         self.yara_scanner = monitor_instance.scanner
@@ -207,14 +176,21 @@ class MonitorFolder(FileSystemEventHandler):
             file_ext = pathlib.Path(filename).suffix.lower()
             if file_ext in self.monitor.RANSOMWARE_EXTENSIONS:
                 self.monitor.log(f"\n🚨 ALERTA MÁXIMO! DETECTADA EXTENSÃO DE RANSOMWARE '{file_ext}' EM '{filename}'!")
-                self.monitor.encerrar_proctree(reason=f"Extensão Maliciosa ({file_ext})")
-                return
+                self.monitor.encerrar_proctree(reason=f"Extensão Maliciosa ({file_ext})"); return
+            if event_type == 'created' and self.monitor.extrair_extensao(file_path):
+                # A análise de ML/YARA agora é feita pelo loop principal do psutil
+                pass
             if event_type == 'modified' and not self.monitor.extrair_extensao(file_path):
                 with open(file_path, "rb") as f: data = f.read(524288) 
                 if self.monitor.calculate_entropy(data) > 7.2:
-                    self.monitor.log(f"\n🚨 ALERTA DE ENTROPIA! Arquivo '{filename}' suspeito.")
-                    self.monitor.encerrar_proctree(reason="Alta Entropia")
-                    return
+                    now = time.time()
+                    if now - self.monitor.last_entropy_hit_time > 3: self.monitor.entropy_hit_score = 0
+                    self.monitor.entropy_hit_score += 1
+                    self.monitor.last_entropy_hit_time = now
+                    self.monitor.log(f"[*] ALERTA DE ENTROPIA! Arquivo '{filename}' suspeito. Nível de Agressividade: {self.monitor.entropy_hit_score}/5")
+                    if self.monitor.entropy_hit_score >= 5:
+                        self.monitor.log(f"\n🚨 PADRÃO DE ATAQUE DETECTADO! MÚLTIPLOS ALERTAS DE ENTROPIA EM SÉRIE!")
+                        self.monitor.encerrar_proctree(reason="Padrão de Criptografia Rápida"); return
         except Exception: pass
     def on_created(self, event):
         if event.is_directory or self.monitor.active_threat: return
@@ -223,13 +199,11 @@ class MonitorFolder(FileSystemEventHandler):
         if event.is_directory or self.monitor.active_threat: return
         if event.src_path in self.monitor.CANARY_FILES:
             self.monitor.log(f"\n🚨 ALERTA MÁXIMO! GATILHO ISCA ACIONADO EM '{os.path.basename(event.src_path)}'!")
-            self.monitor.encerrar_proctree(reason="Arquivo Isca Modificado")
-            return
+            self.monitor.encerrar_proctree(reason="Arquivo Isca Modificado"); return
         self._analyze_file(event.src_path, event_type='modified')
     def on_moved(self, event):
         if event.is_directory or self.monitor.active_threat: return
         if event.src_path in self.monitor.CANARY_FILES or event.dest_path in self.monitor.CANARY_FILES:
             self.monitor.log(f"\n🚨 ALERTA MÁXIMO! GATILHO ISCA MOVIDO/RENOMEADO!")
-            self.monitor.encerrar_proctree(reason="Arquivo Isca Movido")
-            return
+            self.monitor.encerrar_proctree(reason="Arquivo Isca Movido"); return
         self._analyze_file(event.dest_path, event_type='moved')

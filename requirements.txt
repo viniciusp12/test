@@ -1,8 +1,8 @@
+customtkinter
 psutil
 yara-python
 requests
 watchdog
-regex
-customtkinter
+pywin32
 pefile
 scikit-learn
